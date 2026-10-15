@@ -17,6 +17,7 @@
 package com.easymobo.openlabeler.tensorflow;
 
 import com.easymobo.openlabeler.model.HintModel;
+import com.easymobo.openlabeler.monitoring.OpenLabelerMonitoring;
 import com.easymobo.openlabeler.preference.LabelMapItem;
 import com.easymobo.openlabeler.preference.Settings;
 import com.easymobo.openlabeler.util.AppUtils;
@@ -134,6 +135,7 @@ public class ObjectDetector implements AutoCloseable
                         model.close();
                     }
                     model = SavedModelBundle.load(savedModelFile.getAbsolutePath(), "serve");
+                    OpenLabelerMonitoring.get().modelLoaded(savedModelFile.getAbsolutePath());
                     String message = MessageFormat.format(bundle.getString("msg.loadedSavedModel"), savedModelFile);
                     LOG.info(message);
                     printSignature(model);

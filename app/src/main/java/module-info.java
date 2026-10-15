@@ -6,6 +6,7 @@ module com.easymobo.openlabeler.app {
     requires javafx.swing;
     requires org.apache.commons.io;
     requires java.logging;
+    requires java.net.http;
     requires jakarta.xml.bind;
     requires org.apache.commons.lang3;
     requires org.kordamp.ikonli.javafx;
@@ -29,4 +30,6 @@ module com.easymobo.openlabeler.app {
     requires org.tensorflow;
 
     exports com.easymobo.openlabeler;
+
+    opens com.easymobo.openlabeler.monitoring to com.fasterxml.jackson.databind;
 }

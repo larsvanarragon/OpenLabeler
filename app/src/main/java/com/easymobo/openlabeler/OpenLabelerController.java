@@ -18,6 +18,7 @@ package com.easymobo.openlabeler;
 
 import com.easymobo.openlabeler.model.Annotation;
 import com.easymobo.openlabeler.model.ObjectModel;
+import com.easymobo.openlabeler.monitoring.OpenLabelerMonitoring;
 import com.easymobo.openlabeler.preference.PreferencePane;
 import com.easymobo.openlabeler.preference.Settings;
 import com.easymobo.openlabeler.support.SupportInfoPane;
@@ -418,8 +419,9 @@ public class OpenLabelerController implements Initializable, AutoCloseable
         if (!force && !Settings.isSaveEveryChange()) {
             return;
         }
+        Annotation model = null;
         try {
-            Annotation model = tagBoard.getModel();
+            model = tagBoard.getModel();
             if (model == null) {
                 return;
             }
@@ -443,9 +445,12 @@ public class OpenLabelerController implements Initializable, AutoCloseable
             if (!Settings.isSaveEveryChange()) {
                 undoManager.forgetHistory();
             }
+            OpenLabelerMonitoring.get().annotationSaved(model.getFile(), objectCount(model));
         }
         catch (Exception ex) {
             LOG.log(Level.SEVERE, "Unable to save", ex);
+            File image = model == null ? null : model.getFile();
+            OpenLabelerMonitoring.get().annotationSaveFailed(image, ex);
         }
     }
 
@@ -503,6 +508,7 @@ public class OpenLabelerController implements Initializable, AutoCloseable
                 undoManager.forgetHistory();
 
                 updateAppTitle(newFile);
+                OpenLabelerMonitoring.get().imageLoaded(newFile, objectCount(annotation));
             }
             catch (Exception ex) {
                 LOG.log(Level.SEVERE, "Unable to load", ex);
@@ -666,6 +672,10 @@ public class OpenLabelerController implements Initializable, AutoCloseable
             }
         }
         return null;
+    }
+
+    private static int objectCount(Annotation model) {
+        return model.getObjects() == null ? 0 : model.getObjects().size();
     }
 
     private void updateAppTitle(File file) {

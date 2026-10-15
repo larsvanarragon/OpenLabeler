@@ -20,6 +20,9 @@ import com.easymobo.openlabeler.model.Annotation;
 import com.easymobo.openlabeler.model.BoundBox;
 import com.easymobo.openlabeler.model.HintModel;
 import com.easymobo.openlabeler.model.ObjectModel;
+import com.easymobo.openlabeler.monitoring.InferenceGate;
+import com.easymobo.openlabeler.monitoring.MonitoringEvent;
+import com.easymobo.openlabeler.monitoring.OpenLabelerMonitoring;
 import com.easymobo.openlabeler.preference.NameColor;
 import com.easymobo.openlabeler.preference.Settings;
 import com.easymobo.openlabeler.tensorflow.ObjectDetector;
@@ -53,6 +56,7 @@ import javafx.scene.transform.Scale;
 import javafx.scene.transform.TransformChangedEvent;
 import javafx.scene.transform.Translate;
 
+import java.io.File;
 import java.lang.invoke.MethodHandles;
 import java.text.MessageFormat;
 import java.util.*;
@@ -86,6 +90,8 @@ public class TagBoard extends Group implements AutoCloseable
    private Rotate rotate;
    private ContextMenu contextMenu;
    private ObjectDetector objectDetector;
+   private final Object detectorLock = new Object();
+   private final InferenceGate inferenceGate = new InferenceGate();
    private ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
 
    // Root model
@@ -633,8 +639,16 @@ public class TagBoard extends Group implements AutoCloseable
 
    private void onHintAccepted(HintTag hintTag) {
       // Turn a hint tag to an object tag
-      String label = hintTag.getModel().getName();
-      BoundBox box = hintTag.getModel().getBoundBox();
+      HintModel hintModel = (HintModel) hintTag.getModel();
+      String label = hintModel.getName();
+      BoundBox box = hintModel.getBoundBox();
+      Object operation = hintTag.getProperties().get(OpenLabelerMonitoring.HINT_OPERATION_ID);
+      File image = getModel() == null ? null : getModel().getFile();
+      OpenLabelerMonitoring.get().hintAccepted(
+            image,
+            operation instanceof String operationId ? operationId : null,
+            label,
+            hintModel.getScore());
       ObjectModel om = new ObjectModel(label, box.getXMin(), box.getYMin(), box.getXMax(), box.getYMax());
       ObjectTag objectTag = createObjectTag(om);
       objectTag.setSelected(true);
@@ -645,37 +659,79 @@ public class TagBoard extends Group implements AutoCloseable
       if (!Settings.isUseInference()) {
          return;
       }
+      final Annotation model = getModel();
+      if (model == null || model.getFile() == null) {
+         return;
+      }
+      final File image = model.getFile();
+      final String imageKey = image.getAbsolutePath();
+      if (!inferenceGate.tryAcquire(imageKey)) {
+         return;
+      }
       new Thread(() -> {
+         String operationId = UUID.randomUUID().toString();
+         long startedAt = System.nanoTime();
+         OpenLabelerMonitoring.get().inferenceStarted(image, operationId);
          try {
-            // Object detector and hints
-            if (objectDetector == null) {
-               objectDetector = new ObjectDetector();
-               objectDetector.init();
-               objectDetector.statusProperty().addListener((observable, oldValue, newValue) -> statusProperty.set(newValue));
-            }
-
-            final Annotation model = getModel();
-            if (model != null) {
-               List<HintModel> hints = objectDetector.detect(model.getFile());
-               Platform.runLater(() -> {
-                  if (getModel() != model) {
-                     return;
-                  }
-                  hints.forEach(hint -> createHintTag(hint));
-                  if (model.getObjects().size() > 0) {
-                     clearHints();
-                  }
-                  else {
-                     statusProperty.set(MessageFormat.format(bundle.getString("msg.detectedObjects"), hints.size()));
-                     showHints();
-                  }
-               });
-            }
+            ensureDetector();
+            List<HintModel> hints = objectDetector.detect(image);
+            long durationMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt);
+            OpenLabelerMonitoring.get().inferenceCompleted(
+                  image, operationId, hints.size(), toPredictions(hints), durationMs);
+            Platform.runLater(() -> applyHints(model, hints, operationId));
          }
          catch (Exception ex) {
+            long durationMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt);
+            OpenLabelerMonitoring.get().inferenceFailed(image, operationId, ex, durationMs);
             LOG.log(Level.WARNING, "Fail to detect", ex);
          }
+         finally {
+            inferenceGate.release(imageKey);
+         }
       }, "Object Detector").start();
+   }
+
+   private void ensureDetector() {
+      synchronized (detectorLock) {
+         if (objectDetector == null) {
+            objectDetector = new ObjectDetector();
+            objectDetector.init();
+            objectDetector.statusProperty().addListener((observable, oldValue, newValue) -> statusProperty.set(newValue));
+         }
+      }
+   }
+
+   private void applyHints(Annotation model, List<HintModel> hints, String operationId) {
+      if (getModel() != model) {
+         return;
+      }
+      hints.forEach(hint -> {
+         HintTag hintTag = createHintTag(hint);
+         hintTag.getProperties().put(OpenLabelerMonitoring.HINT_OPERATION_ID, operationId);
+      });
+      if (model.getObjects().size() > 0) {
+         clearHints();
+      }
+      else {
+         statusProperty.set(MessageFormat.format(bundle.getString("msg.detectedObjects"), hints.size()));
+         showHints();
+      }
+   }
+
+   private static List<MonitoringEvent.Prediction> toPredictions(List<HintModel> hints) {
+      if (hints == null || hints.isEmpty()) {
+         return List.of();
+      }
+      int limit = Math.min(hints.size(), 1000);
+      List<MonitoringEvent.Prediction> predictions = new ArrayList<>(limit);
+      for (int i = 0; i < limit; i++) {
+         HintModel hint = hints.get(i);
+         if (hint == null || hint.getName() == null || hint.getName().isBlank()) {
+            continue;
+         }
+         predictions.add(new MonitoringEvent.Prediction(hint.getName(), hint.getScore()));
+      }
+      return predictions;
    }
 
    private String getCoordinates(ShapeItem shape) {

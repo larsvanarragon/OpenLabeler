@@ -159,6 +159,12 @@
             <artifactId>openlabeler-preloader</artifactId>
             <version>1.0.0</version>
         </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <version>5.10.2</version>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
     <build>
         <resources>
@@ -168,6 +174,30 @@
             </resource>
         </resources>
         <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>default-testCompile</id>
+                        <configuration>
+                            <compilerArgs>
+                                <arg>--add-modules</arg>
+                                <arg>jdk.httpserver</arg>
+                                <arg>--add-reads</arg>
+                                <arg>com.easymobo.openlabeler.app=jdk.httpserver</arg>
+                            </compilerArgs>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <argLine>--add-modules jdk.httpserver</argLine>
+                </configuration>
+            </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-clean-plugin</artifactId>
